@@ -1,0 +1,25 @@
+@startuml
+!theme plain
+skinparam componentStyle uml2
+
+' Central data store
+database "Data Store\n(SQLite)" as db
+
+' 7 Subsystems defined with their languages
+component "Telemetry Ingest\n(C)" as ingest
+component "Numerical Model\n(FORTRAN 77+F90)" as model
+component "Analytics & Orchestration\n(Python)" as analytics
+component "Services / API\n(Java)" as services
+component "Operator Console\n(JavaScript, jQuery)" as dashboard
+component "UI-Next\n(TypeScript, React)" as ui_next
+component "Reporting & Export\n(Python)" as reporting
+
+' Data and control flow paths
+ingest --> db : Writes telemetry readings
+analytics --> db : Reads inputs & saves forecasts
+analytics --> model : Controls execution (writes deck, runs, parses)
+reporting --> db : Reads forecasts for export
+services --> db : Reads data to serve clients
+dashboard ..> services : Consumes REST API
+ui_next ..> services : Consumes REST API
+@enduml
