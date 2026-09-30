@@ -1,0 +1,89 @@
+@startuml 03-state-forecast-view
+' UML state machine: the Forecast tab of the operator console.
+' Source of truth: dashboard/js/views/forecast.js (tabbed layout, ?legacy=1 not covered).
+' Every state and transition cites the line(s) that implement it.
+' CIS*3250 A2 - Team Watchtower - Part 3 (behaviour)
+
+skinparam defaultFontName Arial
+skinparam shadowing false
+skinparam state {
+  BackgroundColor #FFFFFF
+  BorderColor #37474F
+  ArrowColor #37474F
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #B08900
+}
+
+title Forecast tab - state machine (dashboard/js/views/forecast.js)
+
+state "Forecast tab mounted" as Mounted {
+
+  state "select start station" as pick <<choice>>
+
+  [*] --> pick : app.js:71 mount('forecast')\n/ render($el), wireEvents(),\npopulateStationSelect()  [38-77]
+
+  state "NoStation" as NoStation : entry / #fc-runs = "Select a station\nfrom the Stations tab."  [84]\n\nDead end until re-mount: the dropdown is\nbuilt from the same empty roster, so no\nchange event can fire.  [87-95]
+  pick -left-> NoStation : [no selectedStation\nand roster empty]  [79-84]
+
+  state "Station open" as Open {
+
+    state "LoadingRuns" as LoadingRuns : entry / spinner in #fc-runs;\nGET /api/forecast?station=stn  [97-102]
+    state "RunsError" as RunsError : entry / banner "Forecast unreachable (err)"  [103-105]
+    state "NoRuns" as NoRuns : entry / runs table "no forecast run";\nchart "no forecast runs for stn"  [107, 116-119]
+    state "year to open" as pickYear <<choice>>
+
+    [*] --> LoadingRuns
+
+    LoadingRuns --> RunsError : response [err]
+    LoadingRuns --> NoRuns : response [0 rows]\n/ renderRuns(rows)
+    LoadingRuns --> pickYear : response [rows > 0]\n/ renderRuns(rows)  [107-108]
+
+    state "Runs shown" as Runs {
+      state "LoadingSeries" as LoadingSeries : entry / State.selectYear(year);\nhighlight run row; spinner in #fc-chart;\ncacheGet("series:stn:year")  [149-157]
+      state "SeriesShown" as SeriesShown : entry / currentSeries = rows;\ndrawChart(); renderSeriesTable()  [171-175]\n\nchange #fc-var / chartVar = value; drawChart()  [255-258]\nmouseenter table row / chartCtl.highlight(i)  [260-262]
+      state "SeriesError" as SeriesError #FFF3E0 : entry / banner "Series unreachable (err)";\nempty series table  [161-164]\n\nHAZARD: currentSeries is NOT cleared here.\nChanging #fc-var redraws the PREVIOUS\nseries over the banner, labelled with\nthe new year.  [172, 255-258]
+
+      LoadingSeries --> SeriesShown : [cache hit, entry under 20 s old]  [158]\n(state.js:136-142)
+      LoadingSeries --> SeriesShown : GET /api/series ok\n/ cachePut(key, rows)  [160, 166-167]
+      LoadingSeries --> SeriesError : GET /api/series [err]
+    }
+
+    pickYear --> LoadingSeries : [selectedYear has a run]\n/ year = selectedYear  [109-113]
+    pickYear --> LoadingSeries : [else]\n/ year = LAST row's year  [114-115]
+
+    Runs --> LoadingSeries : click .run-row\n/ openYear(stn, row.year)  [250-253]
+  }
+
+  pick --> Open : [selectedStation set]  [83]
+  pick --> Open : [no selectedStation, roster not empty]\n/ State.selectStation(roster[0])  [80-81]
+
+  Open --> Open : change #fc-station  [244-248]
+}
+
+Mounted --> [*] : hash leaves #forecast\n/ app.js:75-76 calls teardown():\noff('.fc'), chartCtl = null,\ncurrentSeries = []  [271-275]
+
+note top of Open
+  Self-transition "change #fc-station": exits whichever
+  inner state is active and re-enters at LoadingRuns,
+  doing State.selectStation(v); openStation(v).  [244-248]
+end note
+
+note bottom of Open
+  HAZARD - out-of-order responses.
+  In-flight requests are never tagged or cancelled.
+  Switch station A -> B quickly; if A's /api/forecast
+  answers last, A's runs are drawn under B's heading
+  and A's series is opened.  [102-121, 160-168]
+end note
+
+note bottom of Mounted
+  HAZARD - callbacks outlive teardown.
+  teardown() unbinds events but cannot stop in-flight AJAX.
+  A late /api/forecast reply still runs openYear(), which calls
+  State.selectYear() on the shared state after the tab has gone.
+  DOM writes are no-ops (their elements were removed).  [115, 150, 271-275]
+end note
+
+@enduml

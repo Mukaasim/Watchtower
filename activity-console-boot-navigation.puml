@@ -1,0 +1,101 @@
+@startuml 03-activity-console-boot-navigation
+' UML activity diagram: operator console main workflow (boot + tab navigation).
+' Sources: dashboard/index.html, dashboard/js/app.js, dashboard/js/api.js,
+'          dashboard/js/dashboard.js, services/src/ca/meridian/api/*.java
+' CIS*3250 A2 - Team Watchtower - Part 3 (behaviour)
+
+skinparam defaultFontName Arial
+skinparam shadowing false
+skinparam ArrowColor #37474F
+skinparam activity {
+  BackgroundColor #FFFFFF
+  BorderColor #37474F
+  DiamondBackgroundColor #ECEFF1
+}
+skinparam swimlane {
+  BorderColor #90A4AE
+  TitleFontStyle bold
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #B08900
+}
+
+title Operator console - boot and tab navigation (tabbed layout; ?legacy=1 branch shown for completeness)
+
+|Browser / index.html|
+start
+:GET / from static server\n(server.js, port 8080 or MERIDIAN_UI_PORT)  [server.js:9, 16-18];
+:Inline pre-boot shim:\nMERIDIAN_LEGACY = /[?&]legacy=1/.test(search)  [index.html:40-41];
+if (URL has ?legacy=1 ?) then (yes)
+  :Remove #app; insert #legacy shell\n(2016 two-pane markup)  [index.html:42-70];
+  :Load scripts in fixed order:\njQuery > api > util > charts > views > app > dashboard  [index.html:75-101];
+  |app.js (router)|
+  :boot(): #content / #tabs not found\n> return, do nothing  [app.js:119-123];
+  |Browser / index.html|
+  :dashboard.js finds #legacy and runs the\n2016 single-page flow (stations > forecast > series)  [dashboard.js:17, 27-102];
+  stop
+else (no)
+  :Load scripts in fixed order:\njQuery > api > util > charts > views > app > dashboard  [index.html:75-101];
+  :dashboard.js gate: no #legacy > no-op  [dashboard.js:17];
+endif
+
+|app.js (router)|
+:boot() on DOM ready  [app.js:115, 150];
+:buildTabBar() from ORDER =\nstations, forecast, anomalies, compare, quality, about  [app.js:24, 39-48];
+:Bind tab click and window 'hashchange'  [app.js:127-134];
+
+fork
+  |MeridianApi (api.js)|
+  :stations() > $.ajax GET BASE + /api/stations\n(BASE = MERIDIAN_API_BASE or http://localhost:8081)  [api.js:14, 34-40, 60];
+  |Java API :8081|
+  :StationHandler: sqlite3 -json\nSELECT stnid, days, first_year, last_year  [StationHandler.java:24-26];
+  :200 + JSON array, or 500 {"error": ...}  [StationHandler.java:27-36];
+  |MeridianApi (api.js)|
+  :Record timing in diag; cb(err, rows)\n(err = jQuery status string; error body ignored)  [api.js:41-54];
+  |app.js (router)|
+  if (err?) then (no)
+    :State.setStations(rows)\n> emit 'stations'  [app.js:139; state.js:63-71];
+  else (yes)
+    :Error swallowed: roster stays []\n(no banner at boot)  [app.js:139];
+  endif
+  :id = currentHashId()\n(hash head; empty or unknown > 'stations')  [app.js:50-59];
+fork again
+  |app.js (router)|
+  repeat :pollHealth()  [app.js:100, 143];
+    :MeridianApi.health() > GET /api/health\n(same get() path as stations)  [api.js:59];
+    if (err?) then (yes)
+      :Badge "API offline";\nState.setHealth(null)  [app.js:103-105];
+    else (no)
+      :Badge "API <version>";\nState.setHealth(h)  [app.js:106-109];
+    endif
+    :wait 15 s (setInterval, never cleared)  [app.js:144];
+  repeat while (page open?) is (yes)
+  detach
+end fork
+
+|app.js (router)|
+repeat :mount(id)  [app.js:71];
+  :view = viewFor(id); if none > Stations view  [app.js:72-73];
+  if (a view is currently mounted?) then (yes)
+    :current.teardown()\n(exceptions only logged)  [app.js:75-79];
+  else (no)
+  endif
+  :State.set('activeTab', id);\nhighlight tab; empty #content;\nappend fresh <div id="view-{id}">  [app.js:81-87];
+  if (view.render($el) throws?) then (yes)
+    :Show banner "This screen failed to load: ..."  [app.js:90-93];
+  else (no)
+    :View renders and issues its own API calls\n(e.g. Forecast: see state diagram 03-state-forecast-view)  [app.js:88-89];
+  endif
+  :Wait for 'hashchange', or a click on the tab\nthat is already active  [app.js:97, 127-132];
+  :id = currentHashId()  [app.js:50-59];
+repeat while (page open?) is (yes)
+stop
+
+note right
+  The first mount waits for /api/stations to return
+  (success OR failure). A hashchange before then mounts
+  a view early, with an empty roster.  [app.js:134 vs 138-141]
+end note
+
+@enduml
