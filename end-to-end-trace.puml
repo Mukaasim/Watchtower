@@ -1,0 +1,76 @@
+@startuml
+title Meridian End-to-End Weather Reading Trace
+
+actor "Field Station" as FS
+participant "Ingest\n(C)" as ING
+database "SQLite Store" as DB
+participant "Analytics Orchestrator\n(Python)" as ORCH
+participant "Crop Model\n(Fortran)" as MODEL
+participant "Output Parser\n(Python)" as PARSER
+participant "REST API\n(Java)" as API
+participant "Operator Console\n(JavaScript / jQuery)" as CON
+
+FS -> ING : 44-byte binary telemetry frame
+note right of ING
+Big-endian format
+MRD1 header
+Station ID
+Year + day-of-year
+TMAX, TMIN, RAIN,
+SRAD, RH, WIND
+end note
+
+ING -> DB : INSERT OR REPLACE reading
+note right of DB
+SQLite reading row
+stnid, year, doy,
+tmax, tmin, rain,
+srad, rh, wind, flags
+end note
+
+DB --> ORCH : SELECT weather readings
+note right of ORCH
+SQL rows converted to
+Python Reading objects
+end note
+
+ORCH -> MODEL : MERIDIAN.DAT
+note right of MODEL
+Fixed-width text deck
+DOY, TMAX, TMIN,
+RAIN, SRAD
+end note
+
+MODEL --> PARSER : MERIDIAN.OUT
+note right of PARSER
+Fixed-width text output
+DOY, SW, ET,
+DRAIN, BIOM, LAI
+end note
+
+PARSER -> DB : INSERT forecast data
+note right of DB
+SQLite forecast and
+forecast_daily rows
+end note
+
+CON -> API : GET /api/series?station=ID&year=YYYY
+note over CON, API
+HTTP GET request
+Query parameters:
+station, year
+end note
+
+API -> DB : SELECT forecast_daily rows
+DB --> API : SQLite query result
+
+API --> CON : HTTP 200 application/json
+note right of CON
+JSON array of forecast objects
+end note
+
+CON -> CON : Parse JSON into JavaScript objects
+CON -> CON : Format numeric value
+CON -> CON : Render HTML DOM / bar chart
+
+@enduml
